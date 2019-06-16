@@ -4,10 +4,29 @@ import (
 	"crypto"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
+	"flag"
 	"testing"
 
+	"github.com/ThalesIgnite/crypto11"
 	"github.com/beevik/etree"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	pkcs11LibPath = flag.String("pkcs11-lib", "", `
+The path to the PKCS#11 shared library (.so) file that implements the API for
+the hw device to run the test. e.g. /usr/local/lib/softhsm/libsofthsm2.so`)
+
+	pkcs11TokenLabel = flag.String("pkcs11-token-label", "", `
+The PKCS#11 CKA_LABEL value for identifying the token. This is a plain text
+string.`)
+
+	pkcs11PIN = flag.String("pkcs11-pin", "", "The PKCS#11 PIN (i.e. the password) for the given token.")
+
+	pkcs11KeyID = flag.String("pkcs11-key-id", "", `
+The PKCS#11 CKA_ID value as a hex string identifying the asymmetric key pair to
+be used for the signing test. Do not include the 0x prefix.`)
 )
 
 func TestSign(t *testing.T) {
@@ -181,4 +200,30 @@ func TestSignWithECDSA(t *testing.T) {
 	require.NoError(t, err)
 
 	testSignWithContext(t, ctx, method, crypto.SHA512)
+}
+
+func TestPKCS11(t *testing.T) {
+	if *pkcs11LibPath == "" {
+		t.Skip("No PKCS#11 library specified")
+	}
+
+	cfg := crypto11.Config{
+		Path:       *pkcs11LibPath,
+		TokenLabel: *pkcs11TokenLabel,
+		Pin:        *pkcs11PIN,
+	}
+	ctx, err := crypto11.Configure(&cfg)
+	require.NoError(t, err)
+
+	id, err := hex.DecodeString(*pkcs11KeyID)
+	require.NoError(t, err)
+
+	signer, err := ctx.FindKeyPair(id, nil)
+	require.NoError(t, err)
+
+	signingContext, err := NewSigningContext(signer, nil)
+	require.NoError(t, err)
+
+	method := signingContext.GetSignatureMethodIdentifier()
+	testSignWithContext(t, signingContext, method, signingContext.Hash)
 }
